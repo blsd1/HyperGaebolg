@@ -19,11 +19,13 @@
 #define SPEAREX_CLASSNAME "ef_spearex"
 #define SPEAREX2_CLASSNAME "ef_spearex2"
 #define TASK_RELOAD 13320141
+#define TASK_AMMO  23320141
 
-#define V_MODEL "models/v_speargunex.mdl"
-#define P_MODEL "models/p_speargunex.mdl"
-#define W_MODEL "models/w_speargunex.mdl"
-#define S_SPEARGUNEX "models/speargunex_spear.mdl"
+#define V_MODEL "models/epic_zombie/v_speargunexv2.mdl"
+#define P_MODEL "models/epic_zombie/p_speargunex.mdl"
+#define W_MODEL "models/epic_zombie/w_speargunex.mdl"
+#define S_SPEARGUNEX "models/epic_zombie/speargunex_spear.mdl"
+
 
 new const SpearSounds[5][] = 
 {
@@ -36,16 +38,21 @@ new const SpearSounds[5][] =
 
 new const SpearSoundsGeneric[7][] = 
 {
-	"weapons/speargunex_draw.wav",
-	"weapons/speargunex_draw_empty.wav",
-	"weapons/speargunex_reload.wav",
-	"weapons/speargunex_spin1_1.wav",
-	"weapons/speargunex_spin1_2.wav",
-	"weapons/speargunex_spin2_1.wav",
-	"weapons/speargunex_spin2_2.wav"
+	"sound/weapons/speargunex_draw.wav",
+	"sound/weapons/speargunex_draw_empty.wav",
+	"sound/weapons/speargunex_reload.wav",
+	"sound/weapons/speargunex_spin1_1.wav",
+	"sound/weapons/speargunex_spin1_2.wav",
+	"sound/weapons/speargunex_spin2_1.wav",
+	"sound/weapons/speargunex_spin2_2.wav"
 }
 
-
+new const SpearResources[3][] =
+{
+	"sprites/weapon_speargun.txt",
+	"sprites/epic_zombie/640hud12_2.spr",
+	"sprites/epic_zombie/640hud103_2.spr"
+}
 
 new const ExplosionSpr[] = "sprites/spear_exp.spr"
 
@@ -73,7 +80,7 @@ new g_MsgWeaponList, g_MsgCurWeapon, g_MsgAmmoX
 // CVars
 new cvar_spear_speed , cvar_spear_exp_radius , cvar_spear_damage , cvar_spear_damage2 , cvar_spear_knock , cvar_time_draw , cvar_time_reload , cvar_time_explosion
 
-new g_SprId_LaserBeam, g_SprId_Exp,g_WeaponState[33], Float:g_TimeCharge[33], g_SpeargunEx_Exp,g_SprId_SpearExExp,g_Old_Weapon[33]
+new g_SprId_LaserBeam, g_SprId_Exp,g_WeaponState[33], Float:g_TimeCharge[33],g_SprId_SpearExExp,g_Old_Weapon[33]
 new g_ItemID_kar
 enum
 {
@@ -121,6 +128,7 @@ public plugin_init()
 	g_MsgWeaponList = get_user_msgid("WeaponList")
 	g_MsgCurWeapon = get_user_msgid("CurWeapon")
 	g_MsgAmmoX = get_user_msgid("AmmoX")
+	g_ItemID_kar = zp_register_extra_item("Hyper Gaebolg", 350, ZP_TEAM_HUMAN)
 }
 
 public plugin_precache()
@@ -133,12 +141,15 @@ public plugin_precache()
 		engfunc(EngFunc_PrecacheSound, SpearSounds[i])
 	for(new i = 0; i < sizeof(SpearSoundsGeneric); i++)
 		engfunc(EngFunc_PrecacheGeneric, SpearSoundsGeneric[i])
-	g_SpeargunEx_Exp =  engfunc(EngFunc_PrecacheModel, S_SPEARGUNEX)
+	for(new i = 0; i < sizeof(SpearResources); i++)
+	{
+		if(i == 0) engfunc(EngFunc_PrecacheGeneric, SpearResources[i])
+		else engfunc(EngFunc_PrecacheModel, SpearResources[i])
+	}	
 	g_SprId_LaserBeam = engfunc(EngFunc_PrecacheModel, "sprites/laserbeam.spr")
 	g_SprId_Exp = engfunc(EngFunc_PrecacheGeneric, ExplosionSpr)
 	g_SprId_SpearExExp = engfunc(EngFunc_PrecacheGeneric, "sprites/ef_summonex_charging_exp.spr")
 	
-	g_ItemID_kar = zp_register_extra_item("Hyper-Gaebolg", 350, ZP_TEAM_HUMAN)
 }
 
 public client_putinserver(id)
@@ -179,8 +190,9 @@ public Get_Spear(id)
 	g_Spear[id] = SPEAR
 	g_WeaponState[id] = 0
 	give_item(id, weapon_spear)
-	
-	update_ammo(id, -1, g_Spear[id])
+	zp_set_user_infinite_ammo(id, CSW_SPEAR, 1)
+	remove_task(id+TASK_AMMO)
+	set_task(0.15, "task_update_ammo_give", id+TASK_AMMO)
 }
 
 public Remove_Spear(id)
@@ -190,6 +202,7 @@ public Remove_Spear(id)
 	g_Spear[id] = 0
 	g_WeaponState[id] = 0
 	remove_task(id+TASK_RELOAD)
+	zp_set_user_infinite_ammo(id, CSW_SPEAR, 2)
 }
 
 public Event_CurWeapon(id)
@@ -296,9 +309,6 @@ public fw_CmdStart(id, UcHandle, Seed)
 	if(!pev_valid(Ent)) return
 	if(CurButton & IN_ATTACK2) 
 	{
-		CurButton &= ~IN_ATTACK2
-		set_uc(UcHandle, UC_Buttons, CurButton)
-		
 		if(get_pdata_float(Ent, 46, 4) > 0.0 || get_pdata_float(Ent, 47, 4) > 0.0) 
 			return
 		if(!g_Spear[id])
@@ -353,22 +363,17 @@ public fw_CmdStart(id, UcHandle, Seed)
 		static OldButton; OldButton = pev(id, pev_oldbuttons)
 		if(OldButton & IN_ATTACK2)
 		{
-			if(g_WeaponState[id] == WEAPON_WAITCHARGING)
+			if(g_WeaponState[id] == WEAPON_STARTCHARGING || g_WeaponState[id] == WEAPON_WAITCHARGING)
 			{
 				set_pdata_float(id, 83, 0.0, 5)
 				Spearex_Shooting(id,1)
 			} else if(g_WeaponState[id] == WEAPON_FINISHCHARGING) {
 				Spearex_Shooting(id,2)
 			}
+			g_WeaponState[id] = WEAPON_NONE
 		} else {
 			if(get_pdata_float(Ent, 46, 4) > 0.0 || get_pdata_float(Ent, 47, 4) > 0.0) 
 				return
-			
-			if(g_WeaponState[id] == WEAPON_STARTCHARGING)
-			{
-				set_pdata_float(id, 83, 0.0, 5)
-				Spearex_Shooting(id,1)
-			}
 			
 			g_WeaponState[id] = WEAPON_NONE
 		}
@@ -442,38 +447,45 @@ public Create_Spearex(id,mode)
 	if(!pev_valid(Ent))
 		return
 	
-	static Float:Origin[3], Float:Target[3], Float:Angles[3], Float:Velocity[3]
-	Get_Position(id, 60.0, 10.0, -5.0, Origin)
-	pev(id, pev_v_angle, Angles); Angles[0] *= -1.0
-	fm_get_aim_origin(id, Target)
+	new Float:vecOrigin[3]; pev(id, pev_origin, vecOrigin)
+	new Float:vecAngles[3]; pev(id, pev_v_angle, vecAngles)
+	new Float:vecVelocity[3]; angle_vector(vecAngles, ANGLEVECTOR_FORWARD, vecVelocity)
+	new Float:vecViewOfs[3]; pev(id, pev_view_ofs, vecViewOfs)
+
+	vecOrigin[0] += vecViewOfs[0] + vecVelocity[0] * 20.0
+	vecOrigin[1] += vecViewOfs[1] + vecVelocity[1] * 20.0
+	vecOrigin[2] += vecViewOfs[2] + vecVelocity[2] * 20.0
+
+	vecVelocity[0] *= get_pcvar_float(cvar_spear_speed)
+	vecVelocity[1] *= get_pcvar_float(cvar_spear_speed)
+	vecVelocity[2] *= get_pcvar_float(cvar_spear_speed)
+
+	new Float:vecVVelocity[3]
+	velocity_by_aim(id, get_pcvar_num(cvar_spear_knock), vecVVelocity)
+
+	engfunc(EngFunc_SetModel, Ent, S_SPEARGUNEX)
+	engfunc(EngFunc_SetOrigin, Ent, vecOrigin)
+	engfunc(EngFunc_VecToAngles, vecVelocity, vecAngles)
 
 	set_pev(Ent, pev_movetype, MOVETYPE_FLY)
+	set_pev(Ent, pev_solid, SOLID_TRIGGER)
 	set_pev(Ent, pev_owner, id)
+	set_pev(Ent, pev_user, id)
+	set_pev(Ent, pev_angles, vecAngles)
+	set_pev(Ent, pev_velocity, vecVelocity)
+	set_pev(Ent, pev_nextthink, get_gametime() + 5.0)
+	set_pev(Ent, pev_vuser1, vecVVelocity)
+
 	if(mode==1) {
 		set_pev(Ent, pev_classname, SPEAREX_CLASSNAME)
-		engfunc(EngFunc_SetModel, Ent, S_SPEARGUNEX)	
-		set_pev(Ent, pev_mins, Float:{-1.0, -1.0, -1.0})
-		set_pev(Ent, pev_maxs, Float:{1.0, 1.0, 1.0})
-		
-		set_pev(Ent, pev_origin, Origin)
-		set_pev(Ent, pev_angles, Angles)
-		set_pev(Ent, pev_gravity, 0.01)
-		
-		set_pev(Ent, pev_solid, SOLID_TRIGGER)
-		
-		set_pev(Ent, pev_user, id)
-		set_pev(Ent, pev_touched, 0)
-		set_pev(Ent, pev_time, 0.0)
-		
-		set_pev(Ent, pev_time2, get_gametime() + 5.0)
-		
-		set_pev(Ent, pev_nextthink, get_gametime() + 0.1)
-		
-		Get_SpeedVector(Origin, Target, get_pcvar_float(cvar_spear_speed), Velocity)
-		set_pev(Ent, pev_velocity, Velocity)
-		
-		g_CurrentSpear[id] = Ent
-	
+	} else if(mode==2) {
+		set_pev(Ent, pev_classname, SPEAREX2_CLASSNAME)
+		set_pev(Ent, pev_skin, 1)
+	}
+
+	g_CurrentSpear[id] = Ent
+
+	if(mode==1) {
 		message_begin(MSG_BROADCAST, SVC_TEMPENTITY)
 		write_byte(TE_BEAMFOLLOW)
 		write_short(Ent)
@@ -498,29 +510,6 @@ public Create_Spearex(id,mode)
 		write_byte(150)
 		message_end()
 	} else if(mode==2) {
-		set_pev(Ent, pev_classname, SPEAREX2_CLASSNAME)
-		engfunc(EngFunc_SetModel, Ent, S_SPEARGUNEX)	
-		set_pev(Ent, pev_mins, Float:{-1.0, -1.0, -1.0})
-		set_pev(Ent, pev_maxs, Float:{1.0, 1.0, 1.0})
-		
-		set_pev(Ent, pev_origin, Origin)
-		set_pev(Ent, pev_angles, Angles)
-		set_pev(Ent, pev_gravity, 0.01)
-		
-		set_pev(Ent, pev_solid, SOLID_TRIGGER)
-		
-		set_pev(Ent, pev_user, id)
-		set_pev(Ent, pev_touched, 0)
-		set_pev(Ent, pev_time, 0.0)
-		set_pev(Ent, pev_time2, get_gametime() + 5.0)
-		set_pev(Ent, pev_skin, 1)
-		set_pev(Ent, pev_nextthink, get_gametime() + 0.1)
-		
-		Get_SpeedVector(Origin, Target, get_pcvar_float(cvar_spear_speed), Velocity)
-		set_pev(Ent, pev_velocity, Velocity)
-		
-		g_CurrentSpear[id] = Ent
-	
 		message_begin(MSG_BROADCAST, SVC_TEMPENTITY)
 		write_byte(TE_BEAMFOLLOW)
 		write_short(Ent)
@@ -545,176 +534,129 @@ public Create_Spearex(id,mode)
 		write_byte(150)
 		message_end()
 	}
-	
-	
-	
 }
 public SpearExThink(Ent)
 {
 	if(!pev_valid(Ent))
 		return
-	if(pev(Ent, pev_flags) == FL_KILLME)
-		return
-		
-	static Victim; Victim = pev(Ent, pev_attached)
+	
 	static Owner; Owner = pev(Ent, pev_user)
+	
+	SpearExExplosion(Ent, 0)
+	set_pev(Ent, pev_flags, FL_KILLME)
+	
 	if(is_user_connected(Owner))
-	{
-		static Victim; Victim = FindClosesEnemy(Ent)
-		if(is_user_alive(Victim) && entity_range(Victim, Ent) <= 640.0)
-		{
-			static Float:Origin[3]; pev(Victim, pev_origin, Origin)
-			Aim_To(Ent, Origin, 1.0, 0)
-			
-			static Float:Velocity[3], Float:Cur[3];
-			
-			pev(Ent, pev_origin, Cur)
-			get_speed_vector(Cur, Origin, 2000.0, Velocity)
-			set_pev(Ent, pev_velocity, Velocity)
-		}
-	}
-	if(is_user_alive(Victim) && cs_get_user_team(Owner) != cs_get_user_team(Victim))
-	{
-		static Float:Origin[3]
-		pev(Victim, pev_origin, Origin)
-		engfunc(EngFunc_SetOrigin, Ent, Origin)
-		
-		if(is_user_alive(Owner))
-		{
-			static Float:OriginA[3]; pev(Owner, pev_origin, OriginA)
-			static Float:Velocity[3]; Get_SpeedVector(OriginA, Origin, float(250), Velocity)
-			
-			set_pev(Victim, pev_velocity, Velocity)
-		}
-	}
-	
-	if(pev(Ent, pev_touched) && pev(Ent, pev_time) <= get_gametime())
-	{
-		SpearExExplosion(Ent, 0)
-		set_pev(Ent, pev_flags, FL_KILLME)
-		
-		static Owner; Owner = pev(Ent, pev_user)
 		UnSet_BitVar(g_Shoot, Owner)
-	}
-	
-	if(pev(Ent, pev_time2) <= get_gametime())
-	{
-		set_pev(Ent, pev_flags, FL_KILLME)
-		
-		static Owner; Owner = pev(Ent, pev_user)
-		UnSet_BitVar(g_Shoot, Owner)
-	}
-	
-	set_pev(Ent, pev_nextthink, get_gametime() + 0.1)
 }
 public SpearExTouch(Ent, Touched)
 {
 	if(!pev_valid(Ent))
 		return
-	if(pev(Ent, pev_movetype) == MOVETYPE_NONE)
-		return
 	
 	static Owner; Owner = pev(Ent, pev_user)
-	if(is_user_alive(Touched) && cs_get_user_team(Touched) != cs_get_user_team(Owner))
+	new Float:vecOrigin[3]; pev(Ent, pev_origin, vecOrigin)
+
+	if(engfunc(EngFunc_PointContents, vecOrigin) == CONTENTS_SKY)
 	{
+		set_pev(Ent, pev_flags, FL_KILLME)
+		return
+	}
+
+	if(Touched == Owner)
+		return
+
+	if(is_user_alive(Touched))
+	{
+		if(cs_get_user_team(Owner) != cs_get_user_team(Touched))
+		{
+			// Detect hitgroup
+			new Float:vecTouchedPos[3]; pev(Touched, pev_origin, vecTouchedPos)
+			new iTrace = create_tr2()
+			engfunc(EngFunc_TraceLine, vecOrigin, vecTouchedPos, DONT_IGNORE_MONSTERS, Ent, iTrace)
+			new iHitGroup = get_tr2(iTrace, TR_iHitgroup)
+			free_tr2(iTrace)
+			set_pev(Ent, pev_hitgroup, iHitGroup)
+			set_pdata_int(Touched, m_iLastHitGroup, iHitGroup, 5)
+
+			new Float:vecVVelocity[3]; pev(Ent, pev_vuser1, vecVVelocity)
+			set_pev(Touched, pev_velocity, vecVVelocity)
+		}
+		
+		set_pev(Ent, pev_aiment, Touched)
 		set_pev(Ent, pev_movetype, MOVETYPE_FOLLOW)
-		set_pev(Ent, pev_solid, SOLID_NOT)
-		set_pev(Ent, pev_touched, 1)
-		set_pev(Ent, pev_time, get_gametime() + get_pcvar_float(cvar_time_explosion))
-		set_pev(Ent, pev_attached, Touched)
 	}
 	else
 	{
-		emit_sound(Ent, CHAN_BODY, SpearSounds[2], VOL_NORM, ATTN_NORM, 0, PITCH_NORM)
 		set_pev(Ent, pev_movetype, MOVETYPE_NONE)
-		set_pev(Ent, pev_solid, SOLID_NOT)
-		set_pev(Ent, pev_touched, 1)
-		set_pev(Ent, pev_time, get_gametime() + get_pcvar_float(cvar_time_explosion))
 	}
+
+	set_pev(Ent, pev_solid, SOLID_NOT)
+	set_pev(Ent, pev_velocity, Float:{0.0, 0.0, 0.0})
+	set_pev(Ent, pev_nextthink, get_gametime() + get_pcvar_float(cvar_time_explosion))
+	
+	emit_sound(Ent, CHAN_BODY, SpearSounds[2], VOL_NORM, ATTN_NORM, 0, PITCH_NORM)
 }
 public SpearExThink2(Ent)
 {
 	if(!pev_valid(Ent))
 		return
-	if(pev(Ent, pev_flags) == FL_KILLME)
-		return
-		
-	static Victim; Victim = pev(Ent, pev_attached)
+	
 	static Owner; Owner = pev(Ent, pev_user)
+	
+	SpearExExplosion2(Ent, 0)
+	set_pev(Ent, pev_flags, FL_KILLME)
+	
 	if(is_user_connected(Owner))
-	{
-		static Victim; Victim = FindClosesEnemy(Ent)
-		if(is_user_alive(Victim) && entity_range(Victim, Ent) <= 640.0)
-		{
-			static Float:Origin[3]; pev(Victim, pev_origin, Origin)
-			Aim_To(Ent, Origin, 1.0, 0)
-			
-			static Float:Velocity[3], Float:Cur[3];
-			
-			pev(Ent, pev_origin, Cur)
-			get_speed_vector(Cur, Origin, 2000.0, Velocity)
-			set_pev(Ent, pev_velocity, Velocity)
-		}
-	}
-	if(is_user_alive(Victim) && cs_get_user_team(Owner) != cs_get_user_team(Victim))
-	{
-		static Float:Origin[3]
-		pev(Victim, pev_origin, Origin)
-		engfunc(EngFunc_SetOrigin, Ent, Origin)
-		
-		if(is_user_alive(Owner))
-		{
-			static Float:OriginA[3]; pev(Owner, pev_origin, OriginA)
-			static Float:Velocity[3]; Get_SpeedVector(OriginA, Origin, float(250), Velocity)
-			
-			set_pev(Victim, pev_velocity, Velocity)
-		}
-	}
-	
-	if(pev(Ent, pev_touched) && pev(Ent, pev_time) <= get_gametime())
-	{
-		SpearExExplosion2(Ent, 0)
-		set_pev(Ent, pev_flags, FL_KILLME)
-		
-		static Owner; Owner = pev(Ent, pev_user)
 		UnSet_BitVar(g_Shoot, Owner)
-	}
-	
-	if(pev(Ent, pev_time2) <= get_gametime())
-	{
-		set_pev(Ent, pev_flags, FL_KILLME)
-		
-		static Owner; Owner = pev(Ent, pev_user)
-		UnSet_BitVar(g_Shoot, Owner)
-	}
-	
-	set_pev(Ent, pev_nextthink, get_gametime() + 0.1)
 }
 
 public SpearExTouch2(Ent, Touched)
 {
 	if(!pev_valid(Ent))
 		return
-	if(pev(Ent, pev_movetype) == MOVETYPE_NONE)
-		return
 	
 	static Owner; Owner = pev(Ent, pev_user)
-	if(is_user_alive(Touched) && cs_get_user_team(Touched) != cs_get_user_team(Owner))
+	new Float:vecOrigin[3]; pev(Ent, pev_origin, vecOrigin)
+
+	if(engfunc(EngFunc_PointContents, vecOrigin) == CONTENTS_SKY)
 	{
+		set_pev(Ent, pev_flags, FL_KILLME)
+		return
+	}
+
+	if(Touched == Owner)
+		return
+
+	if(is_user_alive(Touched))
+	{
+		if(cs_get_user_team(Owner) != cs_get_user_team(Touched))
+		{
+			// Detect hitgroup
+			new Float:vecTouchedPos[3]; pev(Touched, pev_origin, vecTouchedPos)
+			new iTrace = create_tr2()
+			engfunc(EngFunc_TraceLine, vecOrigin, vecTouchedPos, DONT_IGNORE_MONSTERS, Ent, iTrace)
+			new iHitGroup = get_tr2(iTrace, TR_iHitgroup)
+			free_tr2(iTrace)
+			set_pev(Ent, pev_hitgroup, iHitGroup)
+			set_pdata_int(Touched, m_iLastHitGroup, iHitGroup, 5)
+
+			new Float:vecVVelocity[3]; pev(Ent, pev_vuser1, vecVVelocity)
+			set_pev(Touched, pev_velocity, vecVVelocity)
+		}
+		
+		set_pev(Ent, pev_aiment, Touched)
 		set_pev(Ent, pev_movetype, MOVETYPE_FOLLOW)
-		set_pev(Ent, pev_solid, SOLID_NOT)
-		set_pev(Ent, pev_touched, 1)
-		set_pev(Ent, pev_time, get_gametime() + get_pcvar_float(cvar_time_explosion))
-		set_pev(Ent, pev_attached, Touched)
 	}
 	else
 	{
-		emit_sound(Ent, CHAN_BODY, SpearSounds[2], VOL_NORM, ATTN_NORM, 0, PITCH_NORM)
 		set_pev(Ent, pev_movetype, MOVETYPE_NONE)
-		set_pev(Ent, pev_solid, SOLID_NOT)
-		set_pev(Ent, pev_touched, 1)
-		set_pev(Ent, pev_time, get_gametime() + get_pcvar_float(cvar_time_explosion))
 	}
+
+	set_pev(Ent, pev_solid, SOLID_NOT)
+	set_pev(Ent, pev_velocity, Float:{0.0, 0.0, 0.0})
+	set_pev(Ent, pev_nextthink, get_gametime() + get_pcvar_float(cvar_time_explosion))
+	
+	emit_sound(Ent, CHAN_BODY, SpearSounds[2], VOL_NORM, ATTN_NORM, 0, PITCH_NORM)
 }
 
 public SpearExExplosion(Ent, Remote)
@@ -752,31 +694,34 @@ public SpearExExplosion(Ent, Remote)
 	engfunc(EngFunc_WriteCoord, Origin[2])
 	message_end()
 	
-	// Create Spear (Models)
-	message_begin(MSG_BROADCAST,SVC_TEMPENTITY)
-	write_byte(TE_BREAKMODEL)
-	engfunc(EngFunc_WriteCoord, Origin[0])
-	engfunc(EngFunc_WriteCoord, Origin[1])
-	engfunc(EngFunc_WriteCoord, Origin[2])
-	engfunc(EngFunc_WriteCoord, 100)
-	engfunc(EngFunc_WriteCoord, 100)
-	engfunc(EngFunc_WriteCoord, 100)
-	engfunc(EngFunc_WriteCoord, random_num(-50, 50))
-	engfunc(EngFunc_WriteCoord, random_num(-50, 50))
-	engfunc(EngFunc_WriteCoord, random_num(-50, 50))
-	write_byte(20)
-	write_short(g_SpeargunEx_Exp)
-	write_byte(random_num(5, 8))
-	write_byte(15)
-	write_byte(0)
-	message_end()
+
 	
 	emit_sound(Ent, CHAN_BODY, "weapons/speargunex_exp.wav", VOL_NORM, ATTN_NORM, 0, PITCH_NORM)
 	static Id
 	Id = pev(Ent, pev_user)
 	
 	if(is_user_connected(Id))
-		SpearEx_Damage(Ent, Id, Origin, get_pcvar_num(cvar_spear_damage))
+	{
+		static DirectHit; DirectHit = pev(Ent, pev_aiment)
+		static HitGroup; HitGroup = pev(Ent, pev_hitgroup)
+
+		if(is_user_alive(DirectHit) && cs_get_user_team(Id) != cs_get_user_team(DirectHit))
+		{
+			new Float:flDamage = float(get_pcvar_num(cvar_spear_damage))
+			switch(HitGroup)
+			{
+				case HIT_HEAD:                   flDamage *= 3.0
+				case HIT_GENERIC:                flDamage *= 1.0
+				case HIT_STOMACH:                flDamage *= 1.5
+				case HIT_LEFTARM, HIT_RIGHTARM:  flDamage *= 0.75
+				case HIT_LEFTLEG, HIT_RIGHTLEG:  flDamage *= 0.75
+			}
+			set_pdata_int(DirectHit, m_iLastHitGroup, HitGroup, 5)
+			ExecuteHamB(Ham_TakeDamage, DirectHit, 0, Id, flDamage, DMG_BURN)
+		}
+
+		SpearEx_Damage(Ent, Id, Origin, get_pcvar_num(cvar_spear_damage), DirectHit)
+	}
 	
 	if(Remote) SpearExExplosion(Ent, 0)
 }
@@ -799,22 +744,52 @@ public SpearExExplosion2(Ent, Remote)
 	
 	emit_sound(Ent, CHAN_BODY, "weapons/speargunex_exp2.wav", VOL_NORM, ATTN_NORM, 0, PITCH_NORM)
 	
-	
+		// Create Spark V2
+	message_begin(MSG_BROADCAST, SVC_TEMPENTITY)
+	write_byte(TE_SPARKS)
+	engfunc(EngFunc_WriteCoord, Origin[0])
+	engfunc(EngFunc_WriteCoord, Origin[1])
+	engfunc(EngFunc_WriteCoord, Origin[2])
+	message_end()
+
 	static Id
 	Id = pev(Ent, pev_user)
 	
 	if(is_user_connected(Id))
-		SpearEx_Damage(Ent, Id, Origin, get_pcvar_num(cvar_spear_damage2))
+	{
+		static DirectHit; DirectHit = pev(Ent, pev_aiment)
+		static HitGroup; HitGroup = pev(Ent, pev_hitgroup)
+
+		if(is_user_alive(DirectHit) && cs_get_user_team(Id) != cs_get_user_team(DirectHit))
+		{
+			new Float:flDamage = float(get_pcvar_num(cvar_spear_damage2))
+			switch(HitGroup)
+			{
+				case HIT_HEAD:                   flDamage *= 3.0
+				case HIT_STOMACH:                flDamage *= 1.5
+				case HIT_LEFTARM, HIT_RIGHTARM:  flDamage *= 0.75
+				case HIT_LEFTLEG, HIT_RIGHTLEG:  flDamage *= 0.75
+			}
+			set_pdata_int(DirectHit, m_iLastHitGroup, HitGroup, 5)
+			ExecuteHamB(Ham_TakeDamage, DirectHit, 0, Id, flDamage, DMG_BURN)
+		}
+
+		SpearEx_Damage(Ent, Id, Origin, get_pcvar_num(cvar_spear_damage2), DirectHit)
+	}
 	
 	if(Remote) SpearExExplosion2(Ent, 0)
 }
-public SpearEx_Damage(Ent, id, Float:Origin[3],damage)
+public SpearEx_Damage(Ent, id, Float:Origin[3], damage, Except)
 {
-	for(new i = 0; i < get_maxplayers(); i++)
+	for(new i = 1; i <= get_maxplayers(); i++)
 	{
 		if(!is_user_alive(i))
 			continue
+		if(i == Except)
+			continue
 		if(entity_range(Ent, i) > get_pcvar_float(cvar_spear_exp_radius))
+			continue
+		if(cs_get_user_team(id) == cs_get_user_team(i))
 			continue
 
 		if(id != i) ExecuteHamB(Ham_TakeDamage, i, 0, id, float(damage), DMG_BURN)
@@ -938,19 +913,47 @@ public fw_Item_AddToPlayer_Post(Ent, id)
 		g_Spear[id] = pev(Ent, pev_iuser4)
 	}		
 	g_WeaponState[id] = WEAPON_NONE
-	message_begin(MSG_ONE_UNRELIABLE, g_MsgWeaponList, .player = id)
-	write_string(Get_BitVar(g_Had_Spear, id) ? "weapon_speargun" : weapon_spear)
-	write_byte(3) // PrimaryAmmoID
-	write_byte(200) // PrimaryAmmoMaxAmount
-	write_byte(-1) // SecondaryAmmoID
-	write_byte(-1) // SecondaryAmmoMaxAmount
-	write_byte(0) // SlotID (0...N)
-	write_byte(4) // NumberInSlot (1...N)
-	write_byte(CSW_SPEAR) // WeaponID
-	write_byte(0) // Flags
-	message_end()
+
+	if (Get_BitVar(g_Had_Spear, id))
+	{
+		// Player has the spear — send custom speargun WeaponList entry
+		message_begin(MSG_ONE_UNRELIABLE, g_MsgWeaponList, .player = id)
+		write_string("weapon_speargun")
+		write_byte(3)   // PrimaryAmmoID (spear custom)
+		write_byte(200) // PrimaryAmmoMaxAmount
+		write_byte(-1)  // SecondaryAmmoID
+		write_byte(-1)  // SecondaryAmmoMaxAmount
+		write_byte(0)   // SlotID (primary)
+		write_byte(4)   // NumberInSlot
+		write_byte(CSW_AK47) // WeaponID
+		write_byte(0)   // Flags
+		message_end()
+	}
+	else
+	{
+		// Regular AK47 pickup — send correct stock AK47 WeaponList so the HUD works
+		message_begin(MSG_ONE_UNRELIABLE, g_MsgWeaponList, .player = id)
+		write_string(weapon_spear)
+		write_byte(2)   // PrimaryAmmoID: 762nato
+		write_byte(90)  // PrimaryAmmoMaxAmount
+		write_byte(-1)  // SecondaryAmmoID
+		write_byte(-1)  // SecondaryAmmoMaxAmount
+		write_byte(0)   // SlotID (primary)
+		write_byte(1)   // NumberInSlot (correct AK47 position)
+		write_byte(CSW_SPEAR) // WeaponID (CSW_AK47)
+		write_byte(0)   // Flags
+		message_end()
+	}
 
 	return HAM_HANDLED	
+}
+
+public task_update_ammo_give(taskid)
+{
+	new id = taskid - TASK_AMMO
+	if (!is_user_alive(id) || !Get_BitVar(g_Had_Spear, id))
+		return
+	update_ammo(id, -1, g_Spear[id])
 }
 
 public update_ammo(id, Ammo, BpAmmo)
